@@ -1,0 +1,20 @@
+{
+  "context": [
+    {
+      "class": "Tesla Model X",
+      "refer_image": [
+        "00001/front-view.jpg",
+        "00001/rear-view.jpg",
+        "00001/side-view.jpg"
+      ]
+    },
+    {
+      "class": "Tesla Model Y",
+      "refer_image": [
+        "00002/front-view.jpg",
+        "00002/rear-view.jpg",
+        "00002/side-view.jpg"
+      ]
+    }
+  ]
+}

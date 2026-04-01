@@ -1,0 +1,9 @@
+torch
+torchvision
+transformers>=4.39.0
+Pillow
+opencv-python
+numpy
+scikit-learn
+supervision
+matplotlib
