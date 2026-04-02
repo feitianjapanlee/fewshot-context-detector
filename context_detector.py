@@ -96,23 +96,25 @@ class ContextConditionedDetector:
     def _build_class_database(self, context_items: List[Dict], base_dir: Path):
         db = {}
         for item in context_items:
-            class_name = item['class']
+            class_name = item.get('class_name', item['class'])
             image_paths = [base_dir / p for p in item['refer_image']]
             images = [Image.open(p).convert('RGB') for p in image_paths]
             image_embeds = self._encode_images(images)
-            text_embed = self._encode_text([class_name])[0]
+            text_embed = self._encode_text([str(class_name)])[0]
+            color_hists = [self._color_hist(img) for img in images]
             prototype = torch.nn.functional.normalize((image_embeds.mean(dim=0) + text_embed) / 2.0, dim=0)
-            db[class_name] = {
+            db[str(class_name)] = {
                 'image_paths': [str(p) for p in image_paths],
                 'prototype': prototype,
                 'image_embeds': image_embeds,
                 'text_embed': text_embed,
+                'color_hists': color_hists,
             }
         return db
 
     def _build_generic_prompt(self, context_items: List[Dict]) -> str:
-        class_names = [item['class'] for item in context_items]
-        generic_terms = ['object', 'item', 'product', 'vehicle', 'car', 'person', 'thing']
+        class_names = [str(item.get('class_name', item['class'])) for item in context_items]
+        generic_terms = ['object', 'item', 'product', 'vehicle', 'car', 'toy', 'decoration', 'thing']
         prompt_terms = generic_terms + class_names
         return ' . '.join(prompt_terms) + ' .'
 
@@ -124,8 +126,8 @@ class ContextConditionedDetector:
         results = self.det_processor.post_process_grounded_object_detection(
             outputs,
             inputs.input_ids,
-            box_threshold=box_threshold,
-            text_threshold=text_threshold,
+            box_threshold,
+            text_threshold,
             target_sizes=target_sizes,
         )[0]
 
@@ -153,32 +155,63 @@ class ContextConditionedDetector:
             y2 = min(query_image.height, y2)
             if x2 <= x1 or y2 <= y1:
                 continue
-            crops.append(query_image.crop((x1, y1, x2, y2)))
-            valid_props.append({**prop, 'bbox': [x1, y1, x2, y2]})
+            crop = query_image.crop((x1, y1, x2, y2))
+            crops.append(crop)
+            valid_props.append({**prop, 'bbox': [x1, y1, x2, y2], 'crop': crop})
 
         if not crops:
             return []
 
         crop_embeds = self._encode_images(crops)
         class_names = list(class_db.keys())
-        prototypes = torch.stack([class_db[c]['prototype'] for c in class_names], dim=0)
-        sims = crop_embeds @ prototypes.T
 
         detections = []
         for i, prop in enumerate(valid_props):
-            values, idx = torch.max(sims[i], dim=0)
-            similarity = float(values.detach().cpu())
-            class_name = class_names[int(idx.detach().cpu())]
-            proposal_score = float(prop['proposal_score'])
-            final_score = 0.65 * similarity + 0.35 * proposal_score
-            if similarity < match_threshold:
+            crop_embed = crop_embeds[i]
+            crop_hist = self._color_hist(prop['crop'])
+            best = None
+
+            for class_name in class_names:
+                entry = class_db[class_name]
+                pair_sims = torch.matmul(entry['image_embeds'], crop_embed)
+                max_pair_sim = float(pair_sims.max().detach().cpu())
+                proto_sim = float(torch.dot(crop_embed, entry['prototype']).detach().cpu())
+                text_sim = float(torch.dot(crop_embed, entry['text_embed']).detach().cpu())
+                color_sims = [self._hist_intersection(crop_hist, ref_hist) for ref_hist in entry['color_hists']]
+                color_sim = max(color_sims) if color_sims else 0.0
+
+                final_similarity = 0.45 * max_pair_sim + 0.20 * proto_sim + 0.10 * text_sim + 0.25 * color_sim
+                proposal_score = float(prop['proposal_score'])
+                final_score = 0.70 * final_similarity + 0.30 * proposal_score
+
+                candidate = {
+                    'class_name': class_name,
+                    'similarity': final_similarity,
+                    'proposal_score': proposal_score,
+                    'score': final_score,
+                    'color_sim': color_sim,
+                    'max_pair_sim': max_pair_sim,
+                }
+                if best is None or candidate['score'] > best['score']:
+                    best = candidate
+
+            if best is None:
                 continue
+
+            # stricter filter to suppress color/material-near misses
+            if best['similarity'] < match_threshold:
+                continue
+            if best['color_sim'] < 0.35:
+                continue
+            if best['max_pair_sim'] < 0.55:
+                continue
+
             detections.append(Detection(
                 bbox=prop['bbox'],
-                class_name=class_name,
-                score=final_score,
-                similarity=similarity,
-                proposal_score=proposal_score,
+                class_name=best['class_name'],
+                score=best['score'],
+                similarity=best['similarity'],
+                proposal_score=best['proposal_score'],
             ))
 
         if not detections:
@@ -211,6 +244,16 @@ class ContextConditionedDetector:
         feats = self.clip_model.get_text_features(**inputs)
         feats = torch.nn.functional.normalize(feats, dim=-1)
         return feats
+
+    def _color_hist(self, image: Image.Image, bins=(8, 8, 8)) -> np.ndarray:
+        arr = np.array(image.convert('RGB'))
+        hsv = cv2.cvtColor(arr, cv2.COLOR_RGB2HSV)
+        hist = cv2.calcHist([hsv], [0, 1, 2], None, bins, [0, 180, 0, 256, 0, 256])
+        hist = cv2.normalize(hist, hist).flatten().astype(np.float32)
+        return hist
+
+    def _hist_intersection(self, a: np.ndarray, b: np.ndarray) -> float:
+        return float(np.minimum(a, b).sum())
 
     def _draw(self, image: Image.Image, detections: List[Detection], vis_path: str):
         canvas = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
