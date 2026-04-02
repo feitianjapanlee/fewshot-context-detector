@@ -231,19 +231,28 @@ class ContextConditionedDetector:
         kept.sort(key=lambda d: d.score, reverse=True)
         return kept
 
+    def _normalize_clip_features(self, feats) -> torch.Tensor:
+        if isinstance(feats, torch.Tensor):
+            tensor = feats
+        elif hasattr(feats, 'pooler_output') and feats.pooler_output is not None:
+            tensor = feats.pooler_output
+        elif hasattr(feats, 'last_hidden_state') and feats.last_hidden_state is not None:
+            tensor = feats.last_hidden_state[:, 0, :]
+        else:
+            raise TypeError(f'Unsupported CLIP feature output type: {type(feats)!r}')
+        return torch.nn.functional.normalize(tensor, dim=-1)
+
     @torch.no_grad()
     def _encode_images(self, images: List[Image.Image]) -> torch.Tensor:
         inputs = self.clip_processor(images=images, return_tensors='pt').to(self.device)
         feats = self.clip_model.get_image_features(**inputs)
-        feats = torch.nn.functional.normalize(feats, dim=-1)
-        return feats
+        return self._normalize_clip_features(feats)
 
     @torch.no_grad()
     def _encode_text(self, texts: List[str]) -> torch.Tensor:
         inputs = self.clip_processor(text=texts, return_tensors='pt', padding=True).to(self.device)
         feats = self.clip_model.get_text_features(**inputs)
-        feats = torch.nn.functional.normalize(feats, dim=-1)
-        return feats
+        return self._normalize_clip_features(feats)
 
     def _color_hist(self, image: Image.Image, bins=(8, 8, 8)) -> np.ndarray:
         arr = np.array(image.convert('RGB'))
