@@ -28,7 +28,7 @@ This gives a zero additional training baseline and is easy to validate.
 - `requirements.txt` Python dependencies
 - `context_detector.py` main pipeline
 - `demo_context.json` sample input format aligned with the bundled sample data
-- `data/toy-91/context_fixed.json` validated sample context used for the included toy/object dataset
+- `data/toy-91/context.json` validated sample context used for the included toy/object dataset
 - `run_demo.py` CLI entrypoint
 - `evaluate.py` simple evaluator for prediction JSON against GT JSON
 
@@ -53,7 +53,7 @@ This gives a zero additional training baseline and is easy to validate.
 Notes:
 - `refer_image` paths are resolved relative to the context JSON file location.
 - `class_name` is optional in schema terms, but recommended because it improves text matching and makes outputs readable.
-- The bundled sample dataset lives under `data/toy-91/`, so `data/toy-91/context_fixed.json` references `refer_images/...` relative to that directory.
+- The bundled sample dataset lives under `data/toy-91/`, so `data/toy-91/context.json` references `refer_images/...` relative to that directory.
 
 ## Output format
 ```json
@@ -96,7 +96,7 @@ If you want to use `demo_context.json`, place it beside a matching `refer_images
 Minimal GT format:
 ```json
 {
-  "image": "data/data/query_images/019e588b-a94a-4d91-a6e2-17d9fdd17c45.jpg",
+  "image": "data/toy-91/query_images/019e588b-a94a-4d91-a6e2-17d9fdd17c45.jpg",
   "detections": [
     {
       "bbox": [100, 258, 261, 399],
