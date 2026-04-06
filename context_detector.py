@@ -50,6 +50,9 @@ class ContextConditionedDetector:
         text_threshold: float = 0.15,
         match_threshold: float = 0.22,
         nms_threshold: float = 0.45,
+        max_box_area_ratio: float = 0.25,
+        tiny_box_area_ratio: float = 0.015,
+        tiny_box_min_proposal_score: float = 0.30,
         vis_path: Optional[str] = None,
     ) -> Dict:
         context_path = Path(context_json_path)
@@ -73,6 +76,9 @@ class ContextConditionedDetector:
             class_db=class_db,
             match_threshold=match_threshold,
             nms_threshold=nms_threshold,
+            max_box_area_ratio=max_box_area_ratio,
+            tiny_box_area_ratio=tiny_box_area_ratio,
+            tiny_box_min_proposal_score=tiny_box_min_proposal_score,
         )
 
         result = {
@@ -141,12 +147,23 @@ class ContextConditionedDetector:
         return proposals
 
     @torch.no_grad()
-    def _classify_proposals(self, query_image: Image.Image, proposals: List[Dict], class_db: Dict, match_threshold: float, nms_threshold: float):
+    def _classify_proposals(
+        self,
+        query_image: Image.Image,
+        proposals: List[Dict],
+        class_db: Dict,
+        match_threshold: float,
+        nms_threshold: float,
+        max_box_area_ratio: float,
+        tiny_box_area_ratio: float,
+        tiny_box_min_proposal_score: float,
+    ):
         if not proposals:
             return []
 
         crops = []
         valid_props = []
+        image_area = float(query_image.width * query_image.height)
         for prop in proposals:
             x1, y1, x2, y2 = [int(round(v)) for v in prop['bbox'].tolist()]
             x1 = max(0, x1)
@@ -155,9 +172,21 @@ class ContextConditionedDetector:
             y2 = min(query_image.height, y2)
             if x2 <= x1 or y2 <= y1:
                 continue
+            area_ratio = ((x2 - x1) * (y2 - y1)) / image_area
+            # Scene-sized proposals are a recurrent false-positive mode for this toy benchmark.
+            if area_ratio > max_box_area_ratio:
+                continue
+            proposal_score = float(prop['proposal_score'])
+            if area_ratio < tiny_box_area_ratio and proposal_score < tiny_box_min_proposal_score:
+                continue
             crop = query_image.crop((x1, y1, x2, y2))
             crops.append(crop)
-            valid_props.append({**prop, 'bbox': [x1, y1, x2, y2], 'crop': crop})
+            valid_props.append({
+                **prop,
+                'bbox': [x1, y1, x2, y2],
+                'crop': crop,
+                'area_ratio': area_ratio,
+            })
 
         if not crops:
             return []

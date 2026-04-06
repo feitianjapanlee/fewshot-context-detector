@@ -1,6 +1,6 @@
 # TOY-91 sample dataset
 
-This is a small dataset for testing object detection. It contains 91 images of various toys, with only 3 toys defined as detected objects and their class names defined, along with reference images.
+This is a small dataset for testing object detection. It contains 91 images of various toys, with only 3 toys defined as target objects and their class names defined, along with reference images.
 
 `context.json`: Class IDs and names for the 3 classes, and the paths to their reference images.
 
